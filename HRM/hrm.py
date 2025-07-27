@@ -3,6 +3,8 @@ from torch.nn import Module, ModuleList
 
 from einops import rearrange
 
+from x_transformers import Encoder
+
 # helper functions
 
 def exists(v):
