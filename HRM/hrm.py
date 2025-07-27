@@ -5,6 +5,8 @@ from einops import rearrange
 
 from x_transformers import Encoder
 
+from adam_atan2_pytorch import AdamAtan2
+
 # helper functions
 
 def exists(v):
