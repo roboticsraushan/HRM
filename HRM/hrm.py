@@ -124,7 +124,7 @@ class HRM(Module):
 
         # network as they proposed - following figure 4
 
-        def evaluate_network(
+        def evaluate_network_(
             network: Module,
             network_index
         ):
@@ -156,13 +156,13 @@ class HRM(Module):
                     if not divisible_by(iteration, evaluate_network_at):
                         continue
 
-                    evaluate_network(network, network_index)      
+                    evaluate_network_(network, network_index)
 
         # 1-step gradient learning
 
         for network_index, network in enumerate(self.networks):
 
-            evaluate_network(network, network_index)
+            evaluate_network_(network, network_index)
 
         # to output prediction, using the hiddens from the highest hierarchy
 
