@@ -1,5 +1,10 @@
+from __future__ import annotations
+
 import torch
-from torch.nn import Module, ModuleList
+from torch import nn, Tensor, is_tensor
+import torch.nn.functional as F
+from torch.nn import Embedding, Linear, Module, ModuleList
+from torch.utils._pytree import tree_map
 
 from einops import rearrange
 
@@ -15,20 +20,51 @@ def exists(v):
 def default(v, d):
     return v if exists(v) else d
 
+def divisible_by(num, den):
+    return (num % den) == 0
+
+def tree_map_tensor(sample, fn):
+    return tree_map(lambda t: t if not is_tensor(t) else fn(t), sample)
+
 # modules
 
-class Input(Module):
-    def __init__(self):
+class HRM(Module):
+    def __init__(
+        self,
+        *,
+        dim,
+        num_tokens,
+    ):
         super().__init__()
 
-class SlowHighLevelRecurrent(Module):
-    def __init__(self):
-        super().__init__()
+        self.to_input_embed = Embedding(num_tokens, dim)
 
-class FastLowLevelRecurrent(Module):
-    def __init__(self):
-        super().__init__()
+        self.to_pred = Linear(dim, num_tokens, bias = False)
 
-class Output(Module):
-    def __init__(self):
-        super().__init__()
+    def forward(
+        self,
+        seq,
+        hiddens: tuple[Tensor, ...] | None = None,
+        *,
+        labels = None,
+        detach_hiddens = True
+    ):
+
+        if detach_hiddens:
+            hiddens = tree_map_tensor(hiddens, lambda t: t.detach())
+
+        tokens = self.to_input_embed(seq)
+
+        pred = self.to_pred(tokens)
+
+        # if labels passed in, cross entropy loss
+
+        if not exists(labels):
+            return pred, hiddens
+
+        loss = F.cross_entropy(
+            rearrange(pred, 'b n l -> b l n'),
+            labels
+        )
+
+        return loss, (pred, hiddens)
