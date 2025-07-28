@@ -30,6 +30,7 @@ def test_hrm():
         ],
         num_tokens = 256,
         dim = 512,
+        reasoning_steps = 3
 
     )
 
@@ -38,3 +39,7 @@ def test_hrm():
 
     loss, (logits, hiddens) = hrm(seq, labels = labels)
     loss.backward()
+
+    # after much training
+
+    pred = hrm(seq, reasoning_steps = 5)

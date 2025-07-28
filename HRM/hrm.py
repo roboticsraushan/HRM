@@ -3,7 +3,7 @@ from contextlib import nullcontext
 
 import torch
 import torch.nn.functional as F
-from torch import nn, Tensor, tensor, is_tensor, cat, stack
+from torch import Tensor, tensor, is_tensor, cat, stack
 from torch.nn import Embedding, Linear, Module, ModuleList
 from torch.utils._pytree import tree_map
 
@@ -38,9 +38,9 @@ class CombineHiddens(Module):
         super().__init__()
         self.num_hiddens_to_concat = num_hiddens_to_concat
 
-        self.norms = ModuleList([nn.RMSNorm(dim) for _ in range(num_hiddens_to_concat)])
+        self.norms = ModuleList([RMSNorm(dim) for _ in range(num_hiddens_to_concat)])
 
-        self.to_combined = nn.Linear(dim * self.num_hiddens_to_concat, dim, bias = False)
+        self.to_combined = Linear(dim * self.num_hiddens_to_concat, dim, bias = False)
 
     def forward(
         self,
@@ -132,8 +132,11 @@ class HRM(Module):
         *,
         labels = None,
         detach_hiddens = True,
-        one_step_grad = True
+        one_step_grad = True,
+        reasoning_steps = None
     ):
+
+        reasoning_steps = default(reasoning_steps, self.reasoning_steps)
 
         if detach_hiddens:
             hiddens = tree_map_tensor(hiddens, lambda t: t.detach())
@@ -184,7 +187,7 @@ class HRM(Module):
         context = torch.no_grad if one_step_grad else nullcontext
 
         with context():
-            for index in range(self.reasoning_steps * self.lowest_steps_per_reasoning_step - 1):
+            for index in range(reasoning_steps * self.lowest_steps_per_reasoning_step - 1):
                 iteration = index + 1
 
                 for network_index, (network, hidden_combine, evaluate_network_at) in enumerate(zip(self.networks, self.hidden_combiners, self.evaluate_networks_at)):
