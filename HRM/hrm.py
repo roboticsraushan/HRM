@@ -4,10 +4,11 @@ from contextlib import nullcontext
 import torch
 import torch.nn.functional as F
 from torch import Tensor, tensor, is_tensor, cat, stack
-from torch.nn import Embedding, Linear, Module, ModuleList
+from torch.nn import Embedding, Linear, Sequential, Module, ModuleList
 from torch.utils._pytree import tree_map
 
 from einops import rearrange, repeat
+from einops.layers.torch import Rearrange, Reduce
 
 from x_transformers import Encoder, RMSNorm
 
@@ -71,6 +72,8 @@ class HRM(Module):
         num_tokens,
         reasoning_steps = 2,                          # N in the paper - the number of forward evals for the last network (highest hierarchy) above
         relative_period: int | tuple[int, ...] = 2,   # the relative period for each network evaluation call to the one just previous - in the paper, they do 2 networks with a period of 2
+        min_reasoning_steps = 1,
+        max_reasoning_steps = 10,
         ignore_index = -1
     ):
         super().__init__()
@@ -123,6 +126,18 @@ class HRM(Module):
         # output
 
         self.to_pred = Linear(dim, num_tokens, bias = False)
+
+        # Q(continue|halt) for their adaptive computation time setup
+
+        self.min_reasoning_steps = min_reasoning_steps
+        self.max_reasoning_steps = max_reasoning_steps
+
+        self.to_q_continue_halt = Sequential(
+            Reduce('b n d -> b d', 'mean'),
+            RMSNorm(dim),
+            Linear(dim, 2, bias = False),
+            Rearrange('... continue_halt -> continue_halt ...')
+        )
 
         # loss related
 
@@ -191,6 +206,7 @@ class HRM(Module):
 
         with context():
             for index in range(reasoning_steps * self.lowest_steps_per_reasoning_step - 1):
+
                 iteration = index + 1
 
                 for network_index, (network, hidden_combine, evaluate_network_at) in enumerate(zip(self.networks, self.hidden_combiners, self.evaluate_networks_at)):
@@ -199,6 +215,19 @@ class HRM(Module):
                         continue
 
                     evaluate_network_(network, hidden_combine, network_index)
+
+                # adaptive computation time
+
+                is_reasoning_step_boundary = divisible_by(index, reasoning_steps)
+                num_reasoning_steps = index // reasoning_steps
+
+                if is_reasoning_step_boundary and num_reasoning_steps > self.min_reasoning_steps:
+
+                    highest_hidden = hiddens[self.num_networks - 1]
+
+                    q_continue, q_halt = self.to_q_continue_halt(highest_hidden)
+
+                    should_continue_ = q_halt > q_continue
 
         # 1-step gradient learning
 
