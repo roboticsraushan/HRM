@@ -31,13 +31,30 @@ def tree_map_tensor(sample, fn):
 class HRM(Module):
     def __init__(
         self,
+        networks: list[Module | dict],
         *,
         dim,
         num_tokens,
     ):
         super().__init__()
 
+        # input
+
         self.to_input_embed = Embedding(num_tokens, dim)
+
+        # allow for any number of hierarchical modules
+
+        # order in hierarchy should be from low to high
+
+        self.networks = ModuleList([])
+
+        for network in networks:
+            if isinstance(network, dict):
+                network = Encoder(**network)
+
+            self.networks.append(network)
+
+        # output
 
         self.to_pred = Linear(dim, num_tokens, bias = False)
 
@@ -53,7 +70,16 @@ class HRM(Module):
         if detach_hiddens:
             hiddens = tree_map_tensor(hiddens, lambda t: t.detach())
 
+        # seq to input tokens
+
         tokens = self.to_input_embed(seq)
+
+        # network as they proposed
+
+        for network in self.networks:
+            tokens = network(tokens)
+
+        # to output prediction
 
         pred = self.to_pred(tokens)
 
