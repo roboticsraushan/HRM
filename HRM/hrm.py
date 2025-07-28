@@ -3,13 +3,13 @@ from contextlib import nullcontext
 
 import torch
 import torch.nn.functional as F
-from torch import nn, Tensor, tensor, is_tensor, stack
+from torch import nn, Tensor, tensor, is_tensor, cat, stack
 from torch.nn import Embedding, Linear, Module, ModuleList
 from torch.utils._pytree import tree_map
 
 from einops import rearrange, repeat
 
-from x_transformers import Encoder
+from x_transformers import Encoder, RMSNorm
 
 from adam_atan2_pytorch import AdamAtan2
 
@@ -32,6 +32,36 @@ def divisible_by(num, den):
 
 def tree_map_tensor(sample, fn):
     return tree_map(lambda t: t if not is_tensor(t) else fn(t), sample)
+
+# combining hiddens across hierarchies
+
+class CombineHiddens(Module):
+    def __init__(
+        self,
+        dim,
+        num_hiddens_to_concat
+    ):
+        super().__init__()
+        self.num_hiddens_to_concat = num_hiddens_to_concat
+
+        self.norms = ModuleList([nn.RMSNorm(dim) for _ in range(num_hiddens_to_concat)])
+
+        self.to_combined = nn.Linear(dim * self.num_hiddens_to_concat, dim, bias = False)
+
+    def forward(
+        self,
+        hiddens: list[Tensor],
+        hierarchy_index
+    ):
+        hiddens_to_concat = hiddens[hierarchy_index:]
+
+        assert len(hiddens_to_concat) == self.num_hiddens_to_concat
+
+        normed = tuple(norm(t) for norm, t in zip(self.norms, hiddens))
+
+        concatted = cat(normed, dim = -1)
+
+        return self.to_combined(concatted)
 
 # modules
 
@@ -56,7 +86,7 @@ class HRM(Module):
 
         # order in hierarchy should be from low to high
 
-        self.networks = ModuleList([])
+        self.networks = ModuleList()
 
         for network in networks:
             if isinstance(network, dict):
@@ -88,6 +118,10 @@ class HRM(Module):
 
         self.reasoning_steps = reasoning_steps
         self.lowest_steps_per_reasoning_step = last(self.evaluate_networks_at)
+
+        # combining hiddens
+
+        self.hidden_combiners = ModuleList([CombineHiddens(dim, self.num_networks + 1 - network_index) for network_index in range(self.num_networks)])
 
         # output
 
@@ -122,18 +156,26 @@ class HRM(Module):
 
         assert len(hiddens) == self.num_networks
 
+        # hiddens to a dictionary, avoid some inplace error when updating hidden
+ 
+        hiddens = {index: hidden for index, hidden in enumerate(hiddens)}
+
         # network as they proposed - following figure 4
 
         def evaluate_network_(
             network: Module,
+            hidden_combine: Module,
             network_index
         ):
-            all_hiddens = (tokens, *hiddens)
-            network_input = all_hiddens[network_index:-1]
+
+            all_hiddens = (
+                tokens,
+                *[hiddens[i] for i in range(self.num_networks)]
+            )
 
             # combine with mean pool for now
 
-            combined_input = stack(network_input).mean(dim = 0)
+            combined_input = hidden_combine(all_hiddens, network_index)
 
             # forward
 
@@ -151,22 +193,22 @@ class HRM(Module):
             for index in range(self.reasoning_steps * self.lowest_steps_per_reasoning_step - 1):
                 iteration = index + 1
 
-                for network_index, (network, evaluate_network_at) in enumerate(zip(self.networks, self.evaluate_networks_at)):
+                for network_index, (network, hidden_combine, evaluate_network_at) in enumerate(zip(self.networks, self.hidden_combiners, self.evaluate_networks_at)):
 
                     if not divisible_by(iteration, evaluate_network_at):
                         continue
 
-                    evaluate_network_(network, network_index)
+                    evaluate_network_(network, hidden_combine, network_index)
 
         # 1-step gradient learning
 
-        for network_index, network in enumerate(self.networks):
+        for network_index, (network, hidden_combine) in enumerate(zip(self.networks, self.hidden_combiners)):
 
-            evaluate_network_(network, network_index)
+            evaluate_network_(network, hidden_combine, network_index)
 
         # to output prediction, using the hiddens from the highest hierarchy
 
-        highest_hidden = last(hiddens)
+        highest_hidden = hiddens[self.num_networks - 1]
 
         pred = self.to_pred(highest_hidden)
 
