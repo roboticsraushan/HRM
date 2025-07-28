@@ -7,29 +7,35 @@ def test_hrm():
     hrm = HRM(
         networks = [
             dict(
-                dim = 512,
+                dim = 32,
                 depth = 2,
+                attn_dim_head = 8,
+                heads = 1,
                 use_rmsnorm = True,
                 rotary_pos_emb = True,
                 pre_norm = False
             ),
             dict(
-                dim = 512,
+                dim = 32,
                 depth = 4,
+                attn_dim_head = 8,
+                heads = 1,
                 use_rmsnorm = True,
                 rotary_pos_emb = True,
                 pre_norm = False
             ),
             dict(
-                dim = 512,
+                dim = 32,
                 depth = 8,
+                attn_dim_head = 8,
+                heads = 1,
                 use_rmsnorm = True,
                 rotary_pos_emb = True,
                 pre_norm = False
             )
         ],
         num_tokens = 256,
-        dim = 512,
+        dim = 32,
         reasoning_steps = 3
 
     )

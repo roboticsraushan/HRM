@@ -21,6 +21,9 @@ def exists(v):
 def default(v, d):
     return v if exists(v) else d
 
+def last(arr):
+    return arr[-1]
+
 def divisible_by(num, den):
     return (num % den) == 0
 
