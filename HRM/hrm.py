@@ -79,7 +79,8 @@ class HRM(Module):
         min_reasoning_steps_epsilon_prob = 0.5,            # they stochastically choose the minimum segment from 2 .. max with this probability, and 1 step the rest of the time
         max_reasoning_steps = 10,
         act_loss_weight = 1.,
-        ignore_index = -1
+        discount_factor = 1.,
+        ignore_index = -1,
     ):
         super().__init__()
 
@@ -133,6 +134,8 @@ class HRM(Module):
         self.to_pred = Linear(dim, num_tokens, bias = False)
 
         # Q(continue|halt) for their adaptive computation time setup
+
+        self.discount_factor = discount_factor
 
         self.act_loss_weight = act_loss_weight
 
@@ -255,15 +258,26 @@ class HRM(Module):
                     should_halt = q_halt > q_continue
 
                     if return_loss:
+
+                        # Q_halt
+
                         with torch.no_grad():
                             is_correct = (evaluate_pred().argmax(dim = -1) == labels).all(dim = -1)
 
-                        halt_target_loss = F.binary_cross_entropy(q_halt, is_correct.float())
+                        halt_target_loss = F.binary_cross_entropy(
+                            q_halt,
+                            is_correct.float()
+                        )
 
                         act_losses.append(halt_target_loss)
 
+                        # Q_continue
+
                         if exists(prev_q_continue):
-                            continue_target_loss = F.binary_cross_entropy(prev_q_continue, torch.maximum(q_continue, q_halt))
+                            continue_target_loss = F.binary_cross_entropy(
+                                prev_q_continue,
+                                torch.maximum(q_continue, q_halt) * self.discount_factor
+                            )
 
                             act_losses.append(continue_target_loss)
 
