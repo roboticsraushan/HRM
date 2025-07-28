@@ -19,6 +19,13 @@ def test_hrm():
                 use_rmsnorm = True,
                 rotary_pos_emb = True,
                 pre_norm = False
+            ),
+            dict(
+                dim = 512,
+                depth = 8,
+                use_rmsnorm = True,
+                rotary_pos_emb = True,
+                pre_norm = False
             )
         ],
         num_tokens = 256,

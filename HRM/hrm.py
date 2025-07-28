@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import torch
-from torch import nn, Tensor, is_tensor
+from torch import nn, Tensor, tensor, is_tensor
 import torch.nn.functional as F
 from torch.nn import Embedding, Linear, Module, ModuleList
 from torch.utils._pytree import tree_map
@@ -35,6 +35,8 @@ class HRM(Module):
         *,
         dim,
         num_tokens,
+        reasoning_steps = 2,                                    # N in the paper - the number of forward evals for the last network (highest hierarchy) above
+        relative_period: int | tuple[int, ...] = 2    # the relative period for each network evaluation call to the one just previous - in the paper, they do 2 networks with a period of 2
     ):
         super().__init__()
 
@@ -53,6 +55,30 @@ class HRM(Module):
                 network = Encoder(**network)
 
             self.networks.append(network)
+
+        assert len(self.networks) > 0
+
+        # setup how frequent each network is called
+        # the first network (lowest in the hierarchy) should be called every iteration
+
+        num_higher_networks = len(self.networks) - 1
+
+        if not isinstance(relative_period, tuple):
+            relative_period = (relative_period,) * num_higher_networks
+
+        # implied that first network is called always
+
+        if len(relative_period) == (len(self.networks) - 1):
+            relative_period = (1, *relative_period)
+
+        # for the paper, they did (low: 1, high: 2) -
+
+        assert len(relative_period) == len(self.networks) and relative_period[0] == 1
+
+        self.evaluate_networks_at = tensor(relative_period).cumprod(dim = -1).tolist()
+
+        self.reasoning_steps = reasoning_steps
+        self.lowest_steps_per_reasoning_step = self.evaluate_networks_at[-1]
 
         # output
 
@@ -74,7 +100,20 @@ class HRM(Module):
 
         tokens = self.to_input_embed(seq)
 
-        # network as they proposed
+        # network as they proposed - following figure 4
+
+        with torch.no_grad():
+            for index in range(self.reasoning_steps * self.lowest_steps_per_reasoning_step - 1):
+                iteration = index + 1
+
+                for network, evaluate_network_at in zip(self.networks, self.evaluate_networks_at):
+
+                    if not divisible_by(iteration, evaluate_network_at):
+                        continue
+
+                    tokens = network(tokens)
+
+        # 1-step gradient learning
 
         for network in self.networks:
             tokens = network(tokens)
