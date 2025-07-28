@@ -42,10 +42,10 @@ def test_hrm():
     seq = torch.randint(0, 256, (3, 1024))
     labels = torch.randint(0, 256, (3, 1024))
 
-    loss, (_, hiddens) = hrm(seq, labels = labels)
+    loss, hiddens, _ = hrm(seq, labels = labels)
     loss.backward()
 
-    loss, (_, hiddens) = hrm(seq, hiddens = hiddens, labels = labels)
+    loss, hiddens, _ = hrm(seq, hiddens = hiddens, labels = labels)
     loss.backward()
 
     # after much training
