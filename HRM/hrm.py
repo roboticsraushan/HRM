@@ -192,7 +192,7 @@ class HRM(Module):
 
             all_hiddens = (
                 tokens,
-                *[hiddens[i] for i in range(self.num_networks)]
+                *hiddens.values()
             )
 
             # combine with mean pool for now
@@ -239,7 +239,7 @@ class HRM(Module):
 
                     q_continue, q_halt = self.to_q_continue_halt(highest_hidden).sigmoid()
 
-                    should_continue = q_halt > q_continue
+                    should_halt = q_halt > q_continue
 
         # 1-step gradient learning
 
@@ -254,6 +254,8 @@ class HRM(Module):
         pred = self.to_pred(highest_hidden)
 
         # if labels passed in, cross entropy loss
+
+        hiddens = hiddens.values()
 
         if not exists(labels):
             return pred, hiddens

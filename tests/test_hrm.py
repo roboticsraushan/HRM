@@ -42,9 +42,12 @@ def test_hrm():
     seq = torch.randint(0, 256, (3, 1024))
     labels = torch.randint(0, 256, (3, 1024))
 
-    loss, (logits, hiddens) = hrm(seq, labels = labels)
+    loss, (_, hiddens) = hrm(seq, labels = labels)
+    loss.backward()
+
+    loss, (_, hiddens) = hrm(seq, hiddens = hiddens, labels = labels)
     loss.backward()
 
     # after much training
 
-    pred = hrm(seq, reasoning_steps = 5)
+    pred = hrm(seq, max_reasoning_steps = 5)
