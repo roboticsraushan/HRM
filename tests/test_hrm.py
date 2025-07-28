@@ -36,8 +36,7 @@ def test_hrm():
         ],
         num_tokens = 256,
         dim = 32,
-        reasoning_steps = 3
-
+        reasoning_steps = 10
     )
 
     seq = torch.randint(0, 256, (3, 1024))

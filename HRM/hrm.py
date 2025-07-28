@@ -1,5 +1,6 @@
 from __future__ import annotations
 from contextlib import nullcontext
+from random import randrange, random
 
 import torch
 import torch.nn.functional as F
@@ -24,6 +25,9 @@ def default(v, d):
 
 def last(arr):
     return arr[-1]
+
+def satisfy_prob(prob):
+    return random() < prob
 
 def divisible_by(num, den):
     return (num % den) == 0
@@ -72,7 +76,7 @@ class HRM(Module):
         num_tokens,
         reasoning_steps = 2,                          # N in the paper - the number of forward evals for the last network (highest hierarchy) above
         relative_period: int | tuple[int, ...] = 2,   # the relative period for each network evaluation call to the one just previous - in the paper, they do 2 networks with a period of 2
-        min_reasoning_steps = 1,
+        min_reasoning_steps_epsilon_prob = 0.5,            # they stochastically choose the minimum segment from 2 .. max with this probability, and 1 step the rest of the time
         max_reasoning_steps = 10,
         act_binary_ce_loss_weight = 1.,
         ignore_index = -1
@@ -132,7 +136,7 @@ class HRM(Module):
 
         self.act_binary_ce_loss_weight = act_binary_ce_loss_weight
 
-        self.min_reasoning_steps = min_reasoning_steps
+        self.min_reasoning_steps_epsilon_prob = min_reasoning_steps_epsilon_prob
         self.max_reasoning_steps = max_reasoning_steps
 
         self.to_q_continue_halt = Sequential(
@@ -154,10 +158,10 @@ class HRM(Module):
         labels = None,
         detach_hiddens = True,
         one_step_grad = True,
-        reasoning_steps = None
+        max_reasoning_steps = None
     ):
 
-        reasoning_steps = default(reasoning_steps, self.reasoning_steps)
+        max_reasoning_steps = default(max_reasoning_steps, self.max_reasoning_steps)
 
         if detach_hiddens:
             hiddens = tree_map_tensor(hiddens, lambda t: t.detach())
@@ -207,8 +211,13 @@ class HRM(Module):
 
         context = torch.no_grad if one_step_grad else nullcontext
 
+        min_reasoning_steps = self.max_reasoning_steps
+
+        if self.training:
+            min_reasoning_steps = randrange(2, self.max_reasoning_steps + 1) if satisfy_prob(self.min_reasoning_steps_epsilon_prob) else 1
+
         with context():
-            for index in range(reasoning_steps * self.lowest_steps_per_reasoning_step - 1):
+            for index in range(max_reasoning_steps * self.lowest_steps_per_reasoning_step - 1):
 
                 iteration = index + 1
 
@@ -221,10 +230,10 @@ class HRM(Module):
 
                 # adaptive computation time
 
-                is_reasoning_step_boundary = divisible_by(index, reasoning_steps)
-                num_reasoning_steps = index // reasoning_steps
+                is_reasoning_step_boundary = divisible_by(index, self.lowest_steps_per_reasoning_step)
+                num_reasoning_steps = index // self.lowest_steps_per_reasoning_step
 
-                if is_reasoning_step_boundary and num_reasoning_steps > self.min_reasoning_steps:
+                if is_reasoning_step_boundary and num_reasoning_steps > min_reasoning_steps:
 
                     highest_hidden = hiddens[self.num_networks - 1]
 
