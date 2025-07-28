@@ -1,4 +1,5 @@
 from __future__ import annotations
+from contextlib import nullcontext
 
 import torch
 from torch import nn, Tensor, tensor, is_tensor
@@ -90,7 +91,8 @@ class HRM(Module):
         hiddens: tuple[Tensor, ...] | None = None,
         *,
         labels = None,
-        detach_hiddens = True
+        detach_hiddens = True,
+        one_step_grad = True
     ):
 
         if detach_hiddens:
@@ -102,7 +104,9 @@ class HRM(Module):
 
         # network as they proposed - following figure 4
 
-        with torch.no_grad():
+        context = torch.no_grad if one_step_grad else nullcontext
+
+        with context():
             for index in range(self.reasoning_steps * self.lowest_steps_per_reasoning_step - 1):
                 iteration = index + 1
 
