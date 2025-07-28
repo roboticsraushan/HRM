@@ -18,12 +18,6 @@ from adam_atan2_pytorch import AdamAtan2
 def exists(v):
     return v is not None
 
-def first(arr):
-    return arr[0]
-
-def last(arr):
-    return arr[-1]
-
 def default(v, d):
     return v if exists(v) else d
 
