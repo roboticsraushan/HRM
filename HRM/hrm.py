@@ -74,6 +74,7 @@ class HRM(Module):
         relative_period: int | tuple[int, ...] = 2,   # the relative period for each network evaluation call to the one just previous - in the paper, they do 2 networks with a period of 2
         min_reasoning_steps = 1,
         max_reasoning_steps = 10,
+        act_binary_ce_loss_weight = 1.,
         ignore_index = -1
     ):
         super().__init__()
@@ -128,6 +129,8 @@ class HRM(Module):
         self.to_pred = Linear(dim, num_tokens, bias = False)
 
         # Q(continue|halt) for their adaptive computation time setup
+
+        self.act_binary_ce_loss_weight = act_binary_ce_loss_weight
 
         self.min_reasoning_steps = min_reasoning_steps
         self.max_reasoning_steps = max_reasoning_steps
@@ -225,9 +228,9 @@ class HRM(Module):
 
                     highest_hidden = hiddens[self.num_networks - 1]
 
-                    q_continue, q_halt = self.to_q_continue_halt(highest_hidden)
+                    q_continue, q_halt = self.to_q_continue_halt(highest_hidden).sigmoid()
 
-                    should_continue_ = q_halt > q_continue
+                    should_continue = q_halt > q_continue
 
         # 1-step gradient learning
 
