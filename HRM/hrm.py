@@ -224,7 +224,7 @@ class HRM(Module):
         min_reasoning_steps = self.max_reasoning_steps
 
         if self.training:
-            min_reasoning_steps = randrange(2, self.max_reasoning_steps + 1) if satisfy_prob(self.min_reasoning_steps_epsilon_prob) else 1
+            min_reasoning_steps = randrange(2, max_reasoning_steps + 1) if satisfy_prob(self.min_reasoning_steps_epsilon_prob) else 1
 
         with context():
             for index in range(max_reasoning_steps * self.lowest_steps_per_reasoning_step - 1):
@@ -243,7 +243,7 @@ class HRM(Module):
                 is_reasoning_step_boundary = divisible_by(index, self.lowest_steps_per_reasoning_step)
                 num_reasoning_steps = index // self.lowest_steps_per_reasoning_step
 
-                if is_reasoning_step_boundary and num_reasoning_steps > min_reasoning_steps:
+                if is_reasoning_step_boundary and num_reasoning_steps >= min_reasoning_steps:
 
                     highest_hidden = hiddens[self.num_networks - 1]
 
