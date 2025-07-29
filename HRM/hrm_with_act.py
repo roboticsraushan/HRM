@@ -6,7 +6,7 @@ from random import randrange, random
 
 import torch
 import torch.nn.functional as F
-from torch import Tensor, tensor, is_tensor, cat, stack, maximum
+from torch import Tensor, tensor, is_tensor, arange, cat, stack, maximum
 from torch.nn import Embedding, Linear, Sequential, Module, ModuleList
 
 import einx
@@ -32,6 +32,9 @@ def last(arr):
 
 def satisfy_prob(prob):
     return random() < prob
+
+def is_empty(t: Tensor):
+    return t.numel() == 0
 
 def divisible_by(num, den):
     return (num % den) == 0
@@ -164,11 +167,23 @@ class HRM(Module):
         detach_hiddens = True,
         one_step_grad = True,
         max_reasoning_steps = None,
+        adaptive_compute = None
     ):
+        batch, device = seq.shape[0], seq.device
+
+        highest_hidden_index = self.num_networks - 1
 
         return_loss = exists(labels)
 
+        # ACT related variables
+
+        adaptive_compute = default(adaptive_compute, not return_loss)
+
+        assert not (adaptive_compute and return_loss)
+
         max_reasoning_steps = default(max_reasoning_steps, self.max_reasoning_steps)
+
+        # detach all previous hiddens cmoing in
 
         if exists(hiddens) and detach_hiddens:
             hiddens = tuple(h.detach() for h in hiddens)
@@ -177,7 +192,7 @@ class HRM(Module):
 
         tokens = self.to_input_embed(seq)
 
-        # handle hiddens
+        # handle hidden default to zeros, add learned hiddens some other day, should make little difference
 
         if not exists(hiddens):
             hiddens = torch.zeros_like(tokens)
@@ -196,10 +211,21 @@ class HRM(Module):
         if self.training:
             min_reasoning_steps = randrange(2, max_reasoning_steps + 1) if satisfy_prob(self.min_reasoning_steps_epsilon_prob) else 1
 
-        # variables for storing the predicted q_halt_continue and hiddens for learning
+        if not adaptive_compute:
+            # variables for storing the predicted q_halt_continue and hiddens for learning during training
 
-        highest_hiddens = []
-        pred_q_halt_continues = []
+            highest_hiddens = []
+            pred_q_halt_continues = []
+        else:
+
+            # variables for ACT during inference
+            # we will select out the batch elements that exit early, keeping track of the indices, then sort it back at the end
+
+            current_indices = arange(batch, device = device)
+
+            completed_indices = current_indices[0:0] # indices will be added from `current_indices` to this if they exit early
+
+            exited_highest_hiddens = []
 
         # going through the networks
 
@@ -245,35 +271,57 @@ class HRM(Module):
             if not is_reasoning_step_boundary:
                 continue
 
-            highest_hidden = hiddens[self.num_networks - 1]
+            highest_hidden = hiddens[highest_hidden_index]
 
             q_halt_continue = self.to_q_halt_continue(highest_hidden).sigmoid()
 
-            # not training, assume batch of 1
+            # not training
 
             q_halt, q_continue = q_halt_continue
 
-            should_halt = q_halt > q_continue
+            if adaptive_compute:
+                should_halt_at_step = (q_halt > q_continue)
 
-            if not return_loss and should_halt.all():
-                break
+                halted_indices = current_indices[should_halt_at_step]
+
+                completed_indices = cat((completed_indices, halted_indices))
+
+                current_indices = current_indices[~should_halt_at_step]
+
+                tokens = tokens[~should_halt_at_step]
+
+                exited_highest_hiddens.append(hiddens[highest_hidden_index][should_halt_at_step])
+
+                hiddens = {k: v[~should_halt_at_step] for k, v in hiddens.items()}
+
+                if is_empty(current_indices):
+                    break
 
             if return_loss:
 
-                highest_hidden = hiddens[self.num_networks - 1]
+                highest_hidden = hiddens[highest_hidden_index]
 
                 highest_hiddens.append(highest_hidden)
 
                 pred_q_halt_continues.append(q_halt_continue)
 
-        # if labels passed in, cross entropy loss
+        # take care of ACT vs without
 
-        hiddens = list(hiddens.values())
+        if adaptive_compute:
+            exited_highest_hiddens.append(hiddens[highest_hidden_index]) # append remaining unexited hiddens from highest network
+
+            exited_indices_order = cat((completed_indices, current_indices))
+
+            indices_to_orig_batch_order = exited_indices_order.argsort(dim = -1)
+
+            highest_hidden = cat(exited_highest_hiddens)[indices_to_orig_batch_order]
+
+        else:
+            hiddens = list(hiddens.values())
+            highest_hidden = hiddens[highest_hidden_index]
 
         if not return_loss:
             # to output prediction, using the hiddens from the highest hierarchy
-
-            highest_hidden = hiddens[self.num_networks - 1]
 
             logits = self.to_logits(highest_hidden)
 
