@@ -66,10 +66,6 @@ class HRM(Module):
         num_tokens,
         reasoning_steps = 2,                          # N in the paper - the number of forward evals for the last network (highest hierarchy) above
         relative_period: int | tuple[int, ...] = 2,   # the relative period for each network evaluation call to the one just previous - in the paper, they do 2 networks with a period of 2
-        min_reasoning_steps_epsilon_prob = 0.5,            # they stochastically choose the minimum segment from 2 .. max with this probability, and 1 step the rest of the time
-        max_reasoning_steps = 10,
-        act_loss_weight = 1.,
-        discount_factor = 1.,
         ignore_index = -1,
     ):
         super().__init__()
@@ -106,7 +102,7 @@ class HRM(Module):
         if len(relative_period) == (self.num_networks - 1):
             relative_period = (1, *relative_period)
 
-        # for the paper, they did (low: 1, high: 2) -
+        # for the paper, they did (low: 1, high: 2) - read as low evaluated every step, high evaluated every 2 steps
 
         assert len(relative_period) == self.num_networks and relative_period[0] == 1
 
@@ -122,22 +118,6 @@ class HRM(Module):
         # output
 
         self.to_pred = Linear(dim, num_tokens, bias = False)
-
-        # Q(continue|halt) for their adaptive computation time setup
-
-        self.discount_factor = discount_factor
-
-        self.act_loss_weight = act_loss_weight
-
-        self.min_reasoning_steps_epsilon_prob = min_reasoning_steps_epsilon_prob
-        self.max_reasoning_steps = max_reasoning_steps
-
-        self.to_q_continue_halt = Sequential(
-            Reduce('b n d -> b d', 'mean'),
-            RMSNorm(dim),
-            Linear(dim, 2, bias = False),
-            Rearrange('... continue_halt -> continue_halt ...')
-        )
 
         # loss related
 
