@@ -160,6 +160,7 @@ class HRM(Module):
         hiddens: tuple[Tensor, ...] | None = None,
         *,
         labels = None,
+        compute_loss_across_reasoning_steps = False,
         detach_hiddens = True,
         one_step_grad = True,
         max_reasoning_steps = None,
@@ -265,32 +266,45 @@ class HRM(Module):
 
                 pred_q_halt_continues.append(q_halt_continue)
 
-        # to output prediction, using the hiddens from the highest hierarchy
-
-        highest_hidden = hiddens[self.num_networks - 1]
-
-        logits = self.to_logits(highest_hidden)
-
         # if labels passed in, cross entropy loss
 
-        hiddens = hiddens.values()
+        hiddens = list(hiddens.values())
 
         if not return_loss:
+            # to output prediction, using the hiddens from the highest hierarchy
+
+            highest_hidden = hiddens[self.num_networks - 1]
+
+            logits = self.to_logits(highest_hidden)
+
             return logits, hiddens
 
         # get main loss
 
-        main_pred_loss = F.cross_entropy(
-            rearrange(logits, 'b n c -> b c n'),
-            labels,
-            ignore_index = self.ignore_index
-        )
+        highest_hiddens = stack(highest_hiddens) # (l b n d)
+
+        if not compute_loss_across_reasoning_steps:
+            logits = self.to_logits(highest_hiddens[-1])
+
+            main_pred_loss = F.cross_entropy(
+                rearrange(logits, 'b n c -> b c n'),
+                labels,
+                ignore_index = self.ignore_index
+            )
+
+        else:
+            all_logits = self.to_logits(highest_hiddens)
+            num_layers = all_logits.shape[0]
+
+            main_pred_loss = F.cross_entropy(
+                rearrange(all_logits, 'l b n c -> b c n l'),
+                repeat(labels, 'b n -> b n l', l = num_layers),
+                ignore_index = self.ignore_index
+            )
 
         # compute the act loss
 
         q_halts, q_continues = rearrange(pred_q_halt_continues, 'l halt_continue b -> halt_continue l b')
-
-        highest_hiddens = stack(highest_hiddens) # (l b n d)
 
         # q halt loss is simply on whether the prediction is correct or not
 

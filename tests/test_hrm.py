@@ -52,3 +52,36 @@ def test_hrm():
     # after much training
 
     pred = hrm(seq, reasoning_steps = 5)
+
+@pytest.mark.parametrize('compute_loss_across_reasoning_steps', (False, True))
+def test_hrm_with_act(
+    compute_loss_across_reasoning_steps
+):
+    from HRM.hrm_with_act import HRM
+
+    hrm = HRM(
+        networks = [
+            dict(
+                dim = 32,
+                depth = 2,
+                attn_dim_head = 8,
+                heads = 1,
+                use_rmsnorm = True,
+                rotary_pos_emb = True,
+                pre_norm = False
+            )
+        ],
+        num_tokens = 256,
+        dim = 32,
+        max_reasoning_steps = 10
+    )
+
+    seq = torch.randint(0, 256, (3, 1024))
+    labels = torch.randint(0, 256, (3, 1024))
+
+    loss, *_ = hrm(seq, labels = labels)
+    loss.backward()
+
+    # after much training
+
+    pred = hrm(seq, max_reasoning_steps = 5, compute_loss_across_reasoning_steps = compute_loss_across_reasoning_steps)
