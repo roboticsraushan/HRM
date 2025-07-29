@@ -3,6 +3,7 @@ import torch
 
 def test_hrm():
     from HRM.hrm import HRM
+    from x_transformers import Encoder
 
     hrm = HRM(
         networks = [
@@ -24,7 +25,7 @@ def test_hrm():
                 rotary_pos_emb = True,
                 pre_norm = False
             ),
-            dict(
+            Encoder(
                 dim = 32,
                 depth = 8,
                 attn_dim_head = 8,
