@@ -48,11 +48,11 @@ loss.backward()
 
 loss, hiddens, _ = hrm(seq, hiddens = hiddens, labels = labels)
 loss.backward()
-```
 
 # after much training
 
 pred = hrm(seq, reasoning_steps = 5)
+```
 
 ## Citations
 
