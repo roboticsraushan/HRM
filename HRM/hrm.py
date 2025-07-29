@@ -157,49 +157,23 @@ class HRM(Module):
  
         hiddens_dict = {index: hidden for index, hidden in enumerate(hiddens)}
 
-        # network as they proposed - following figure 4
-
-        def evaluate_network_(
-            network: Module,
-            hidden_combine: Module,
-            network_index
-        ):
-
-            all_hiddens = (
-                tokens,
-                *hiddens_dict.values()
-            )
-
-            # combine with mean pool for now
-
-            combined_input = hidden_combine(all_hiddens, network_index)
-
-            # forward
-
-            next_hidden = network(combined_input)
-
-            # store hiddens at appropriate hierarchy, low to highest
-
-            hiddens_dict[network_index] = next_hidden
-
-        def evaluate_pred():
-            # prediction is done from the hiddens of highest hierarchy
-
-            highest_hidden = hiddens_dict[self.num_networks - 1]
-
-            return self.to_pred(highest_hidden)
-
-        # maybe 1-step
-
-        context = torch.no_grad if one_step_grad else nullcontext
+        # calculate total steps
 
         total_low_steps = reasoning_steps * self.lowest_steps_per_reasoning_step
 
-        with context():
-            for index in range(total_low_steps - 1): # -1 to omit last step for the proposed 1-step grad learning
+        # network as they proposed - following figure 4
 
-                iteration = index + 1
+        for index in range(total_low_steps):
 
+            iteration = index + 1
+
+            # maybe 1-step gradient learning
+
+            is_last_step = index == (total_low_steps - 1)
+
+            context = torch.no_grad if one_step_grad and is_last_step else nullcontext
+
+            with context():
                 # evaluate all networks depending on their period
 
                 for network_index, (network, hidden_combine, evaluate_network_at) in enumerate(zip(self.networks, self.hidden_combiners, self.evaluate_networks_at)):
@@ -207,17 +181,28 @@ class HRM(Module):
                     if not divisible_by(iteration, evaluate_network_at):
                         continue
 
-                    evaluate_network_(network, hidden_combine, network_index)
+                    all_hiddens = (
+                        tokens,
+                        *hiddens_dict.values()
+                    )
 
-        # 1-step gradient learning
+                    # combine with concat project
 
-        for network_index, (network, hidden_combine) in enumerate(zip(self.networks, self.hidden_combiners)):
+                    combined_input = hidden_combine(all_hiddens, network_index)
 
-            evaluate_network_(network, hidden_combine, network_index)
+                    # forward
+
+                    next_hidden = network(combined_input)
+
+                    # store hiddens at appropriate hierarchy, low to highest
+
+                    hiddens_dict[network_index] = next_hidden
 
         # to output prediction, using the hiddens from the highest hierarchy
 
-        pred = evaluate_pred()
+        highest_hidden = hiddens_dict[self.num_networks - 1]
+
+        pred = self.to_pred(highest_hidden)
 
         # if labels passed in, cross entropy loss
 
