@@ -156,7 +156,7 @@ class HRM(Module):
         labels = None,
         detach_hiddens = True,
         one_step_grad = True,
-        max_reasoning_steps = None
+        max_reasoning_steps = None,
     ):
 
         act_losses = []
@@ -185,31 +185,6 @@ class HRM(Module):
  
         hiddens = {index: hidden for index, hidden in enumerate(hiddens)}
 
-        # network as they proposed - following figure 4
-
-        def evaluate_network_(
-            network: Module,
-            hidden_combine: Module,
-            network_index
-        ):
-
-            all_hiddens = (
-                tokens,
-                *hiddens.values()
-            )
-
-            # combine with mean pool for now
-
-            combined_input = hidden_combine(all_hiddens, network_index)
-
-            # forward
-
-            next_hidden = network(combined_input)
-
-            # store hiddens at appropriate hierarchy, low to highest
-
-            hiddens[network_index] = next_hidden
-
         def evaluate_pred():
             # prediction is done from the hiddens of highest hierarchy
 
@@ -219,70 +194,90 @@ class HRM(Module):
 
         # maybe 1-step
 
-        context = torch.no_grad if one_step_grad else nullcontext
-
         min_reasoning_steps = self.max_reasoning_steps
 
         if self.training:
             min_reasoning_steps = randrange(2, max_reasoning_steps + 1) if satisfy_prob(self.min_reasoning_steps_epsilon_prob) else 1
 
-        with context():
-            for index in range(max_reasoning_steps * self.lowest_steps_per_reasoning_step - 1):
+        total_steps = max_reasoning_steps * self.lowest_steps_per_reasoning_step
 
-                iteration = index + 1
-                is_reasoning_step_boundary = divisible_by(index, self.lowest_steps_per_reasoning_step)
-                num_reasoning_steps = index // self.lowest_steps_per_reasoning_step
+        for index in range(total_steps):
 
-                # evaluate all networks depending on their period
+            iteration = index + 1
 
+            is_reasoning_step_boundary = divisible_by(index, self.lowest_steps_per_reasoning_step)
+            num_reasoning_steps = index // self.lowest_steps_per_reasoning_step
+
+            # evaluate all networks depending on their period
+
+            is_last_step = index == (total_steps - 1)
+            context = torch.no_grad if one_step_grad and not is_last_step else nullcontext
+
+            with context():
                 for network_index, (network, hidden_combine, evaluate_network_at) in enumerate(zip(self.networks, self.hidden_combiners, self.evaluate_networks_at)):
 
                     if not divisible_by(iteration, evaluate_network_at):
                         continue
 
-                    evaluate_network_(network, hidden_combine, network_index)
+                    all_hiddens = (
+                        tokens,
+                        *hiddens.values()
+                    )
 
-                # adaptive computation time
+                    # combine with mean pool for now
 
-                if is_reasoning_step_boundary:
+                    combined_input = hidden_combine(all_hiddens, network_index)
 
-                    highest_hidden = hiddens[self.num_networks - 1]
+                    # forward
 
-                    q_continue, q_halt = self.to_q_continue_halt(highest_hidden).sigmoid()
+                    next_hidden = network(combined_input)
 
-                    should_halt = q_halt > q_continue
+                    # store hiddens at appropriate hierarchy, low to highest
 
-                    if return_loss:
+                    hiddens[network_index] = next_hidden
 
-                        # Q_halt
+            # adaptive computation time
 
-                        with torch.no_grad():
-                            is_correct = (evaluate_pred().argmax(dim = -1) == labels).all(dim = -1)
+            if not is_reasoning_step_boundary:
+                continue
 
-                        halt_target_loss = F.binary_cross_entropy(
-                            q_halt,
-                            is_correct.float()
-                        )
+            highest_hidden = hiddens[self.num_networks - 1]
 
-                        act_losses.append(halt_target_loss)
+            q_continue, q_halt = self.to_q_continue_halt(highest_hidden).sigmoid()
 
-                        # Q_continue
+            if return_loss:
 
-                        if exists(prev_q_continue):
-                            continue_target_loss = F.binary_cross_entropy(
-                                prev_q_continue,
-                                torch.maximum(q_continue, q_halt) * self.discount_factor
-                            )
+                # Q_halt
 
-                            act_losses.append(continue_target_loss)
+                with torch.no_grad():
+                    is_correct = (evaluate_pred().argmax(dim = -1) == labels).all(dim = -1)
 
-                        prev_q_continue = q_continue
+                halt_target_loss = F.binary_cross_entropy(
+                    q_halt,
+                    is_correct.float()
+                )
 
-        # 1-step gradient learning
+                act_losses.append(halt_target_loss)
 
-        for network_index, (network, hidden_combine) in enumerate(zip(self.networks, self.hidden_combiners)):
+                # Q_continue
 
-            evaluate_network_(network, hidden_combine, network_index)
+                if exists(prev_q_continue):
+                    continue_target_loss = F.binary_cross_entropy(
+                        prev_q_continue,
+                        torch.maximum(q_continue, q_halt) * self.discount_factor
+                    )
+
+                    act_losses.append(continue_target_loss)
+
+                prev_q_continue = q_continue
+
+            else:
+                # not training
+
+                should_halt = q_halt > q_continue
+
+                if should_halt:
+                    break
 
         # to output prediction, using the hiddens from the highest hierarchy
 

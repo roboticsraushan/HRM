@@ -217,4 +217,4 @@ class HRM(Module):
             ignore_index = self.ignore_index
         )
 
-        return loss, hiddens, pred
+        return loss, hiddens_out, pred
