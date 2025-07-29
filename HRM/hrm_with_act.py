@@ -7,14 +7,11 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, tensor, is_tensor, cat, stack
 from torch.nn import Embedding, Linear, Sequential, Module, ModuleList
-from torch.utils._pytree import tree_map
 
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange, Reduce
 
 from x_transformers import Encoder, RMSNorm
-
-from adam_atan2_pytorch import AdamAtan2
 
 # helper functions
 
@@ -32,9 +29,6 @@ def satisfy_prob(prob):
 
 def divisible_by(num, den):
     return (num % den) == 0
-
-def tree_map_tensor(sample, fn):
-    return tree_map(lambda t: t if not is_tensor(t) else fn(t), sample)
 
 # combining hiddens across hierarchies
 
@@ -172,8 +166,8 @@ class HRM(Module):
 
         max_reasoning_steps = default(max_reasoning_steps, self.max_reasoning_steps)
 
-        if detach_hiddens:
-            hiddens = tree_map_tensor(hiddens, lambda t: t.detach())
+        if exists(hiddens) and detach_hiddens:
+            hiddens = tuple(h.detach() for h in hiddens)
 
         # seq to input tokens
 
