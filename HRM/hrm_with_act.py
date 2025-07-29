@@ -225,7 +225,9 @@ class HRM(Module):
 
             completed_indices = current_indices[0:0] # indices will be added from `current_indices` to this if they exit early
 
-            exited_highest_hiddens = []
+            reasoning_steps_for_samples = current_indices[0:0] # for returning the exit layer per batch sample Int['b']
+
+            exited_highest_hiddens = [] # store thie highest hidden as they exit for logits at end
 
         # going through the networks
 
@@ -280,11 +282,13 @@ class HRM(Module):
             q_halt, q_continue = q_halt_continue
 
             if adaptive_compute:
-                should_halt_at_step = (q_halt > q_continue)
+                should_halt_at_step = q_halt > q_continue
 
                 halted_indices = current_indices[should_halt_at_step]
 
                 completed_indices = cat((completed_indices, halted_indices))
+
+                reasoning_steps_for_samples = cat((reasoning_steps_for_samples, torch.ones_like(halted_indices).long() * num_reasoning_steps))
 
                 current_indices = current_indices[~should_halt_at_step]
 
@@ -314,6 +318,10 @@ class HRM(Module):
 
             indices_to_orig_batch_order = exited_indices_order.argsort(dim = -1)
 
+            reasoning_steps_for_samples = F.pad(reasoning_steps_for_samples, (0, batch - reasoning_steps_for_samples.shape[0]), value = max_reasoning_steps)
+
+            reasoning_steps_for_samples = reasoning_steps_for_samples[indices_to_orig_batch_order]
+
             highest_hidden = cat(exited_highest_hiddens)[indices_to_orig_batch_order]
 
         else:
@@ -325,7 +333,10 @@ class HRM(Module):
 
             logits = self.to_logits(highest_hidden)
 
-            return logits, hiddens
+            if not adaptive_compute:
+                return logits, hiddens
+
+            return logits, reasoning_steps_for_samples
 
         # get main loss
 

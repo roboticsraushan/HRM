@@ -84,4 +84,8 @@ def test_hrm_with_act(
 
     # after much training
 
-    pred = hrm(seq, max_reasoning_steps = 5, compute_loss_across_reasoning_steps = compute_loss_across_reasoning_steps)
+    seq_inference = torch.randint(0, 256, (32, 1024))
+
+    pred, exited_indices_order = hrm(seq_inference, max_reasoning_steps = 5, compute_loss_across_reasoning_steps = compute_loss_across_reasoning_steps)
+
+    assert exited_indices_order.shape == (32,)
