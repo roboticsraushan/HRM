@@ -171,7 +171,7 @@ class HRM(Module):
 
             is_last_step = index == (total_low_steps - 1)
 
-            context = torch.no_grad if one_step_grad and is_last_step else nullcontext
+            context = torch.no_grad if one_step_grad and not is_last_step else nullcontext
 
             with context():
                 # evaluate all networks depending on their period
