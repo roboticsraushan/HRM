@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from contextlib import nullcontext
 from random import randrange, random
 
@@ -161,12 +162,15 @@ class HRM(Module):
         labels = None,
         detach_hiddens = True,
         one_step_grad = True,
-        reasoning_steps = None
+        max_reasoning_steps = None
     ):
+
+        act_losses = []
+        prev_q_continue = None
 
         return_loss = exists(labels)
 
-        reasoning_steps = default(reasoning_steps, self.reasoning_steps)
+        max_reasoning_steps = default(max_reasoning_steps, self.max_reasoning_steps)
 
         if detach_hiddens:
             hiddens = tree_map_tensor(hiddens, lambda t: t.detach())
@@ -185,7 +189,7 @@ class HRM(Module):
 
         # hiddens to a dictionary, avoid some inplace error when updating hidden
  
-        hiddens_dict = {index: hidden for index, hidden in enumerate(hiddens)}
+        hiddens = {index: hidden for index, hidden in enumerate(hiddens)}
 
         # network as they proposed - following figure 4
 
@@ -197,7 +201,7 @@ class HRM(Module):
 
             all_hiddens = (
                 tokens,
-                *hiddens_dict.values()
+                *hiddens.values()
             )
 
             # combine with mean pool for now
@@ -210,12 +214,12 @@ class HRM(Module):
 
             # store hiddens at appropriate hierarchy, low to highest
 
-            hiddens_dict[network_index] = next_hidden
+            hiddens[network_index] = next_hidden
 
         def evaluate_pred():
             # prediction is done from the hiddens of highest hierarchy
 
-            highest_hidden = hiddens_dict[self.num_networks - 1]
+            highest_hidden = hiddens[self.num_networks - 1]
 
             return self.to_pred(highest_hidden)
 
@@ -223,12 +227,17 @@ class HRM(Module):
 
         context = torch.no_grad if one_step_grad else nullcontext
 
-        total_low_steps = reasoning_steps * self.lowest_steps_per_reasoning_step
+        min_reasoning_steps = self.max_reasoning_steps
+
+        if self.training:
+            min_reasoning_steps = randrange(2, max_reasoning_steps + 1) if satisfy_prob(self.min_reasoning_steps_epsilon_prob) else 1
 
         with context():
-            for index in range(total_low_steps - 1): # -1 to omit last step for the proposed 1-step grad learning
+            for index in range(max_reasoning_steps * self.lowest_steps_per_reasoning_step - 1):
 
                 iteration = index + 1
+                is_reasoning_step_boundary = divisible_by(index, self.lowest_steps_per_reasoning_step)
+                num_reasoning_steps = index // self.lowest_steps_per_reasoning_step
 
                 # evaluate all networks depending on their period
 
@@ -238,6 +247,42 @@ class HRM(Module):
                         continue
 
                     evaluate_network_(network, hidden_combine, network_index)
+
+                # adaptive computation time
+
+                if is_reasoning_step_boundary:
+
+                    highest_hidden = hiddens[self.num_networks - 1]
+
+                    q_continue, q_halt = self.to_q_continue_halt(highest_hidden).sigmoid()
+
+                    should_halt = q_halt > q_continue
+
+                    if return_loss:
+
+                        # Q_halt
+
+                        with torch.no_grad():
+                            is_correct = (evaluate_pred().argmax(dim = -1) == labels).all(dim = -1)
+
+                        halt_target_loss = F.binary_cross_entropy(
+                            q_halt,
+                            is_correct.float()
+                        )
+
+                        act_losses.append(halt_target_loss)
+
+                        # Q_continue
+
+                        if exists(prev_q_continue):
+                            continue_target_loss = F.binary_cross_entropy(
+                                prev_q_continue,
+                                torch.maximum(q_continue, q_halt) * self.discount_factor
+                            )
+
+                            act_losses.append(continue_target_loss)
+
+                        prev_q_continue = q_continue
 
         # 1-step gradient learning
 
@@ -251,15 +296,24 @@ class HRM(Module):
 
         # if labels passed in, cross entropy loss
 
-        hiddens_out = hiddens_dict.values()
+        hiddens = hiddens.values()
 
         if not return_loss:
-            return pred, hiddens_out
+            return pred, hiddens
 
-        loss = F.cross_entropy(
+        pred_loss = F.cross_entropy(
             rearrange(pred, 'b n l -> b l n'),
             labels,
             ignore_index = self.ignore_index
         )
 
-        return loss, hiddens, pred
+        act_loss = stack(act_losses).mean()
+
+        total_loss = (
+            pred_loss +
+            act_loss * self.act_loss_weight
+        )
+
+        loss_breakdown = (pred_loss, act_loss)
+
+        return total_loss, hiddens, (pred, loss_breakdown)

@@ -50,4 +50,4 @@ def test_hrm():
 
     # after much training
 
-    pred = hrm(seq, max_reasoning_steps = 5)
+    pred = hrm(seq, reasoning_steps = 5)
