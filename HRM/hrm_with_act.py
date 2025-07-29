@@ -1,17 +1,23 @@
 from __future__ import annotations
 
+from collections import namedtuple
 from contextlib import nullcontext
 from random import randrange, random
 
 import torch
 import torch.nn.functional as F
-from torch import Tensor, tensor, is_tensor, cat, stack
+from torch import Tensor, tensor, is_tensor, cat, stack, maximum
 from torch.nn import Embedding, Linear, Sequential, Module, ModuleList
 
+import einx
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange, Reduce
 
 from x_transformers import Encoder, RMSNorm
+
+# constants
+
+Losses = namedtuple('Losses', ['main', 'act'])
 
 # helper functions
 
@@ -126,7 +132,7 @@ class HRM(Module):
 
         # output
 
-        self.to_pred = Linear(dim, num_tokens, bias = False)
+        self.to_logits = Linear(dim, num_tokens, bias = False)
 
         # Q(continue|halt) for their adaptive computation time setup
 
@@ -137,11 +143,11 @@ class HRM(Module):
         self.min_reasoning_steps_epsilon_prob = min_reasoning_steps_epsilon_prob
         self.max_reasoning_steps = max_reasoning_steps
 
-        self.to_q_continue_halt = Sequential(
+        self.to_q_halt_continue = Sequential(
             Reduce('b n d -> b d', 'mean'),
             RMSNorm(dim),
             Linear(dim, 2, bias = False),
-            Rearrange('... continue_halt -> continue_halt ...')
+            Rearrange('... halt_continue -> halt_continue ...')
         )
 
         # loss related
@@ -158,9 +164,6 @@ class HRM(Module):
         one_step_grad = True,
         max_reasoning_steps = None,
     ):
-
-        act_losses = []
-        prev_q_continue = None
 
         return_loss = exists(labels)
 
@@ -185,19 +188,19 @@ class HRM(Module):
  
         hiddens = {index: hidden for index, hidden in enumerate(hiddens)}
 
-        def evaluate_pred():
-            # prediction is done from the hiddens of highest hierarchy
-
-            highest_hidden = hiddens[self.num_networks - 1]
-
-            return self.to_pred(highest_hidden)
-
         # maybe 1-step
 
         min_reasoning_steps = self.max_reasoning_steps
 
         if self.training:
             min_reasoning_steps = randrange(2, max_reasoning_steps + 1) if satisfy_prob(self.min_reasoning_steps_epsilon_prob) else 1
+
+        # variables for storing the predicted q_halt_continue and hiddens for learning
+
+        highest_hiddens = []
+        pred_q_halt_continues = []
+
+        # going through the networks
 
         total_steps = max_reasoning_steps * self.lowest_steps_per_reasoning_step
 
@@ -243,66 +246,85 @@ class HRM(Module):
 
             highest_hidden = hiddens[self.num_networks - 1]
 
-            q_continue, q_halt = self.to_q_continue_halt(highest_hidden).sigmoid()
+            q_halt_continue = self.to_q_halt_continue(highest_hidden).sigmoid()
+
+            # not training, assume batch of 1
+
+            q_halt, q_continue = q_halt_continue
+
+            should_halt = q_halt > q_continue
+
+            if not return_loss and should_halt.all():
+                break
 
             if return_loss:
 
-                # Q_halt
+                highest_hidden = hiddens[self.num_networks - 1]
 
-                with torch.no_grad():
-                    is_correct = (evaluate_pred().argmax(dim = -1) == labels).all(dim = -1)
+                highest_hiddens.append(highest_hidden)
 
-                halt_target_loss = F.binary_cross_entropy(
-                    q_halt,
-                    is_correct.float()
-                )
-
-                act_losses.append(halt_target_loss)
-
-                # Q_continue
-
-                if exists(prev_q_continue):
-                    continue_target_loss = F.binary_cross_entropy(
-                        prev_q_continue,
-                        torch.maximum(q_continue, q_halt) * self.discount_factor
-                    )
-
-                    act_losses.append(continue_target_loss)
-
-                prev_q_continue = q_continue
-
-            else:
-                # not training
-
-                should_halt = q_halt > q_continue
-
-                if should_halt:
-                    break
+                pred_q_halt_continues.append(q_halt_continue)
 
         # to output prediction, using the hiddens from the highest hierarchy
 
-        pred = evaluate_pred()
+        highest_hidden = hiddens[self.num_networks - 1]
+
+        logits = self.to_logits(highest_hidden)
 
         # if labels passed in, cross entropy loss
 
         hiddens = hiddens.values()
 
         if not return_loss:
-            return pred, hiddens
+            return logits, hiddens
 
-        pred_loss = F.cross_entropy(
-            rearrange(pred, 'b n l -> b l n'),
+        # get main loss
+
+        main_pred_loss = F.cross_entropy(
+            rearrange(logits, 'b n c -> b c n'),
             labels,
             ignore_index = self.ignore_index
         )
 
-        act_loss = stack(act_losses).mean()
+        # compute the act loss
+
+        q_halts, q_continues = rearrange(pred_q_halt_continues, 'l halt_continue b -> halt_continue l b')
+
+        highest_hiddens = stack(highest_hiddens) # (l b n d)
+
+        # q halt loss is simply on whether the prediction is correct or not
+
+        with torch.no_grad():
+            all_logits = self.to_logits(highest_hiddens)
+            is_correct = (all_logits.argmax(dim = -1) == labels).all(dim = -1)
+
+        q_halt_losses = F.binary_cross_entropy(
+            q_halts,
+            is_correct.float(),
+            reduction = 'none'
+        )
+
+        # q continue is learned using bellman's on max(q_halt, q_continue) of next reasoning step
+
+        q_max_halt_continue = maximum(q_halts, q_continues)
+
+        q_continue_losses = F.binary_cross_entropy(
+            q_continues[:-1],
+            q_max_halt_continue[1:] * self.discount_factor, # they use a discount factor of 1., don't understand why yet
+            reduction = 'none'
+        )
+
+        # average loss for learning the q values
+
+        act_loss = cat((q_halt_losses, q_continue_losses), dim = 0).mean()
+
+        # total loss + loss breakdown
 
         total_loss = (
-            pred_loss +
+            main_pred_loss +
             act_loss * self.act_loss_weight
         )
 
-        loss_breakdown = (pred_loss, act_loss)
+        loss_breakdown = Losses(main_pred_loss, act_loss)
 
-        return total_loss, hiddens, (pred, loss_breakdown)
+        return total_loss, hiddens, (logits, loss_breakdown)

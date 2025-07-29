@@ -1,6 +1,6 @@
 [project]
 name = "HRM-pytorch"
-version = "0.0.12"
+version = "0.0.14"
 description = "The proposal from a Singaporean AGI company"
 authors = [
     { name = "Phil Wang", email = "lucidrains@gmail.com" }
@@ -25,6 +25,7 @@ classifiers=[
 
 dependencies = [
     "adam-atan2-pytorch",
+    "einx>=0.3.0",
     "einops>=0.8.0",
     "torch>=2.0",
     "x-transformers>=2.5.0"
