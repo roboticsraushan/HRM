@@ -394,11 +394,18 @@ class HRM(Module):
 
         # q continue is learned using bellman's on max(q_halt, q_continue) of next reasoning step
 
-        q_max_halt_continue = maximum(q_halts, q_continues)
+        mask_value = -torch.finfo(q_continues.dtype).max
+
+        q_max_halt_continue = maximum(
+            q_halts[1:-1],
+            q_continues[1:-1]
+        )
+
+        q_continue_target = cat((q_max_halt_continue, q_halts[-1:])) # last step the q_continue target is just q_halt
 
         q_continue_losses = F.binary_cross_entropy(
             q_continues[:-1],
-            q_max_halt_continue[1:] * self.discount_factor, # they use a discount factor of 1., don't understand why yet
+            q_continue_target * self.discount_factor, # they use a discount factor of 1., don't understand why yet
             reduction = 'none'
         )
 
