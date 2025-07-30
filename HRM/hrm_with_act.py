@@ -328,13 +328,17 @@ class HRM(Module):
 
             exited_indices_order = cat((completed_indices, current_indices))
 
+            # sorting back to original batch indices order
+
             indices_to_orig_batch_order = exited_indices_order.argsort(dim = -1)
 
             reasoning_steps_for_samples = F.pad(reasoning_steps_for_samples, (0, batch - reasoning_steps_for_samples.shape[0]), value = -1) # should be -1 for the remaining unexited samples, or maybe max reasoning steps + 1
 
             reasoning_steps_for_samples = reasoning_steps_for_samples[indices_to_orig_batch_order]
 
-            highest_hidden = exit_hiddens[highest_hidden_index][indices_to_orig_batch_order]
+            exit_hiddens = {index: hidden[indices_to_orig_batch_order] for index, hidden in exit_hiddens.items()}
+
+            highest_hidden = exit_hiddens[highest_hidden_index]
 
             # output hiddens will be the hidden at exit
 
