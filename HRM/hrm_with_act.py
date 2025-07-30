@@ -227,7 +227,9 @@ class HRM(Module):
 
             reasoning_steps_for_samples = current_indices[0:0] # for returning the exit layer per batch sample Int['b']
 
-            exited_highest_hiddens = [] # store thie highest hidden as they exit for logits at end
+            # keep track of the hiddens for each batch sample at its exit layer
+
+            exit_hiddens = {index: hidden[0:0] for index, hidden in hiddens.items()}
 
         # going through the networks
 
@@ -295,9 +297,15 @@ class HRM(Module):
 
                 tokens = tokens[~should_halt_at_step]
 
-                exited_highest_hiddens.append(hiddens[highest_hidden_index][should_halt_at_step])
+                # update hiddens for exited, in order of exit, to be sorted back later
 
-                hiddens = {k: v[~should_halt_at_step] for k, v in hiddens.items()}
+                exit_hiddens = {index: cat((exit_hidden, hiddens[index][should_halt_at_step])) for index, exit_hidden in exit_hiddens.items()}
+
+                # update hiddens to only have those non-exited
+
+                hiddens = {index: hidden[~should_halt_at_step] for index, hidden in hiddens.items()}
+
+                # break out of loop if all exited
 
                 if is_empty(current_indices):
                     break
@@ -313,7 +321,10 @@ class HRM(Module):
         # take care of ACT vs without
 
         if adaptive_compute:
-            exited_highest_hiddens.append(hiddens[highest_hidden_index]) # append remaining unexited hiddens from highest network
+
+            # append remaining unexited hiddens
+
+            exit_hiddens = {index: cat((exit_hidden, hiddens[index])) for index, exit_hidden in exit_hiddens.items()}
 
             exited_indices_order = cat((completed_indices, current_indices))
 
@@ -323,10 +334,13 @@ class HRM(Module):
 
             reasoning_steps_for_samples = reasoning_steps_for_samples[indices_to_orig_batch_order]
 
-            highest_hidden = cat(exited_highest_hiddens)[indices_to_orig_batch_order]
+            highest_hidden = exit_hiddens[highest_hidden_index][indices_to_orig_batch_order]
 
+            # output hiddens will be the hidden at exit
+
+            hiddens_out = list(exit_hiddens.values())
         else:
-            hiddens = list(hiddens.values())
+            hiddens_out = list(hiddens.values())
             highest_hidden = hiddens[highest_hidden_index]
 
         if not return_loss:
@@ -335,9 +349,9 @@ class HRM(Module):
             logits = self.to_logits(highest_hidden)
 
             if not adaptive_compute:
-                return logits, hiddens
+                return logits, hiddens_out
 
-            return logits, reasoning_steps_for_samples
+            return logits, hiddens_out, reasoning_steps_for_samples
 
         # get main loss
 
@@ -401,4 +415,4 @@ class HRM(Module):
 
         loss_breakdown = Losses(main_pred_loss, act_loss)
 
-        return total_loss, hiddens, (logits, loss_breakdown)
+        return total_loss, hiddens_out, (logits, loss_breakdown)

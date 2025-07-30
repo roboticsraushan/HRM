@@ -86,6 +86,7 @@ def test_hrm_with_act(
 
     seq_inference = torch.randint(0, 256, (32, 1024))
 
-    pred, exited_indices_order = hrm(seq_inference, max_reasoning_steps = 5, compute_loss_across_reasoning_steps = compute_loss_across_reasoning_steps)
+    pred, exit_hiddens, exited_indices_order = hrm(seq_inference, max_reasoning_steps = 5, compute_loss_across_reasoning_steps = compute_loss_across_reasoning_steps)
 
+    assert len(exit_hiddens) == 1
     assert exited_indices_order.shape == (32,)
