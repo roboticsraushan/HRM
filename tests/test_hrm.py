@@ -1,7 +1,10 @@
 import pytest
+param = pytest.mark.parametrize
+
 import torch
 
-def test_hrm():
+@param('causal', (False, True))
+def test_hrm(causal):
     from HRM.hrm import HRM
     from x_transformers import Encoder
 
@@ -35,6 +38,7 @@ def test_hrm():
                 pre_norm = False
             )
         ],
+        causal = causal,
         num_tokens = 256,
         dim = 32,
         reasoning_steps = 10
@@ -53,9 +57,11 @@ def test_hrm():
 
     pred = hrm(seq, reasoning_steps = 5)
 
-@pytest.mark.parametrize('compute_loss_across_reasoning_steps', (False, True))
+@param('compute_loss_across_reasoning_steps', (False, True))
+@param('causal', (False, True))
 def test_hrm_with_act(
-    compute_loss_across_reasoning_steps
+    compute_loss_across_reasoning_steps,
+    causal
 ):
     from HRM.hrm_with_act import HRM
 
@@ -73,7 +79,8 @@ def test_hrm_with_act(
         ],
         num_tokens = 256,
         dim = 32,
-        max_reasoning_steps = 10
+        max_reasoning_steps = 10,
+        causal = causal
     )
 
     seq = torch.randint(0, 256, (3, 1024))

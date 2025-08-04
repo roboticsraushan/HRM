@@ -9,7 +9,7 @@ from torch.nn import Embedding, Linear, Sequential, Module, ModuleList
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange, Reduce
 
-from x_transformers import Encoder, RMSNorm
+from x_transformers import Encoder, Decoder, RMSNorm
 
 # helper functions
 
@@ -66,9 +66,11 @@ class HRM(Module):
         num_tokens,
         reasoning_steps = 2,                          # N in the paper - the number of forward evals for the last network (highest hierarchy) above
         relative_period: int | tuple[int, ...] = 2,   # the relative period for each network evaluation call to the one just previous - in the paper, they do 2 networks with a period of 2
+        causal = False,
         ignore_index = -1,
     ):
         super().__init__()
+        attn_layers_klass = Encoder if not causal else Decoder
 
         # input
 
@@ -82,7 +84,7 @@ class HRM(Module):
 
         for network in networks:
             if isinstance(network, dict):
-                network = Encoder(**network)
+                network = attn_layers_klass(**network)
 
             self.networks.append(network)
 
