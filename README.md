@@ -4,6 +4,8 @@
 
 Explorations into the proposed recurrent [hierarchical reasoning model](https://arxiv.org/abs/2506.21734) by Wang et al. from [Sapient Intelligence](https://www.sapient.inc/). Official repository is [here](https://github.com/sapientinc/HRM)
 
+Update: [HRM Analysis](https://arcprize.org/blog/hrm-analysis) from Arc-AGI team
+
 ### Install
 
 ```bash
